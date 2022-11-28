@@ -1,4 +1,4 @@
-# Unscented Kalman Filter
+# Extended Kalman Filter
 
 This package provides a simple implementation of the discrete Extended Kalman Filter.
 

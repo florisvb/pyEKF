@@ -28,7 +28,7 @@ def jacobian(f, x0, u0, epsilon=0.001):
     
     return np.matrix(np.vstack(Aj)), np.matrix(np.vstack(Bj))
 
-def __kalman_forward_update__(xhat_fm, P_fm, y, u, A, B, C, R, Q):
+def __extended_kalman_forward_update__(xhat_fm, P_fm, y, u, A, B, C, D, R, Q, h, f):
     """
     Linear kalman update equations
 
@@ -50,18 +50,26 @@ def __kalman_forward_update__(xhat_fm, P_fm, y, u, A, B, C, R, Q):
 
     K_f = P_fm@C.T@np.linalg.inv(C@P_fm@C.T + R)
 
-    xhat_fp = xhat_fm + K_f@(y - C@xhat_fm)
+    #xhat_fp = xhat_fm + K_f@(y - (C@xhat_fm+D@u))
+    xhat_fp = xhat_fm + K_f@(y - h(xhat_fm, u))
     
-    xhat_fm = A@xhat_fp + B@u
+    #xhat_fm = A@xhat_fp + B@u
+    xhat_fm = f(xhat_fp, u)
 
     P_fp = (I - K_f@C)@P_fm
     P_fm = A@P_fp@A.T + gammaW@Q@gammaW.T
 
     return xhat_fp, xhat_fm, P_fp, P_fm
 
-def ekf_numerical(y, x0, f, h, Q, R, u, P0=None):
+def ekf(y, x0, f, h, Q, R, u, P0=None):
     '''
-    everything should be a matrix 
+    y -- 2D array of measurements, rows = measurements; columns = time points
+    x0 -- 2D array of initial state (guess), rows = states; 1 column
+    f -- discrete dynamics function that takes (state, control) as an input and returns a 2D (1 column) array
+    h  -- discrete measurement function that takes (state, control) as an input and returns a 2D (1 column) array
+    Q, R -- 2D square arrays corresponding to process and measurement covariance matrices, respectively
+    u -- 2D array of controls, rows = measurements; columns = time points
+    P0 -- optional, 2D array of initial error covariance (guess)
     '''
 
     nx = x0.shape[0]
@@ -74,11 +82,12 @@ def ekf_numerical(y, x0, f, h, Q, R, u, P0=None):
     xhat_fm = x0
 
     for i in range(y.shape[1]):
+        
         A, B = jacobian(f, np.ravel(xhat_fm[:, -1:]), np.ravel(u[:, i:i+1]))
         C, D = jacobian(h, np.ravel(xhat_fm[:, -1:]), np.ravel(u[:, i:i+1]))
-        
-        _xhat_fp, _xhat_fm, _P_fp, _P_fm = __kalman_forward_update__(xhat_fm[:, -2:], P_fm[-1], y[:, i:i+1], u[:, i:i+1],
-                                                                     A, B, C, R, Q)
+
+        _xhat_fp, _xhat_fm, _P_fp, _P_fm = __extended_kalman_forward_update__(xhat_fm[:, -1:], P_fm[-1], y[:, i:i+1], u[:, i:i+1],
+                                                                              A, B, C, D, R, Q, h, f)
         if xhat_fp is None:
             xhat_fp = _xhat_fp
         else:
@@ -94,66 +103,3 @@ def ekf_numerical(y, x0, f, h, Q, R, u, P0=None):
 
     return xhat_fm[:,0:-1], P_fm[0:-1], s
 
-def ekf_symbolic(Y, x0, f, h, X_s, U_s, Q, R, U, P0=None):
-    '''
-    y -- measurements
-    x0 -- initial state guess
-    f -- function f(X,U) that returns symbolic discrete time dynamics
-    h -- function h(X,U) that returns symbolic discrete time measurements 
-    X -- list of states, symbolic (sympy) variables
-    U -- list of control inputs, symbolic (sympy) variables
-    Q, R -- covariance matrices
-    u -- control inputs
-    P0 -- initial covariance guess
-    '''
-
-    nx = x0.shape[0]
-    if P0 is None:
-        P0 = np.matrix(np.eye(nx)*100)
-
-    xhat_fp = None
-    P_fp = []
-    P_fm = [P0]
-    xhat_fm = x0
-
-    # Jacobian of dynamics with respect to state (symbolic A matrix)
-    A_s = f_sd(X_s, U_s).jacobian(X_s)
-
-    # Jacobian of dynamics with respect to controls (symbolic B matrix)
-    B_s = f_sd(X_s, U_s).jacobian(U_s)
-
-    # Jacobian of measurements with respect to state (symbolic C matrix)
-    C_s = h_sd(X_s, U_s).jacobian(X_s)
-
-    # Jacobian of measurements with respect to controls (symbolic D matrix)
-    D_s = h_sd(X_s, U_s).jacobian(U_s)
-
-    for i in range(Y.shape[1]):
-        sub_x = {X_s[n]: xhat_fm[n, -1] for n in range(xhat_fm.shape[0])}
-        sub_u = {U_s[m]: U[m, i] for m in range(U.shape[0])}
-
-        A = np.array( A_s.subs(sub_x).subs(sub_u) ).astype(float)
-        B = np.array( B_s.subs(sub_x).subs(sub_u) ).astype(float)
-        C = np.array( C_s.subs(sub_x).subs(sub_u) ).astype(float)
-        D = np.array( D_s.subs(sub_x).subs(sub_u) ).astype(float)
-        
-        _xhat_fp, _xhat_fm, _P_fp, _P_fm = __kalman_forward_update__(xhat_fm[:, -1:], 
-                                                                     P_fm[-1], 
-                                                                     Y[:, i:i+1], 
-                                                                     U[:, i:i+1],
-                                                                     A, B, C, D, 
-                                                                     R, Q)
-        if xhat_fp is None:
-            xhat_fp = _xhat_fp
-        else:
-            xhat_fp = np.hstack((xhat_fp, _xhat_fp))
-        xhat_fm = np.hstack((xhat_fm, _xhat_fm))
-        
-        P_fp.append(_P_fp)
-        P_fm.append(_P_fm)
-
-    s = np.zeros([nx,Y.shape[1]]);
-    for i in range(nx):
-        s[i,:] = [np.sqrt( P_fm[j][i,i].squeeze() ) for j in range(Y.shape[1])]
-
-    return xhat_fm[:,0:-1], P_fm[0:-1], s

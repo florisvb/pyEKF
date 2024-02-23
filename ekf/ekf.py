@@ -26,7 +26,7 @@ def jacobian(f, x0, u0, epsilon=0.001):
         j = scipy.optimize.approx_fprime(u0, f_scalar, epsilon, x0, i)
         Bj.append(j)
     
-    return np.matrix(np.vstack(Aj)), np.matrix(np.vstack(Bj))
+    return np.array(np.vstack(Aj)), np.array(np.vstack(Bj))
 
 def __extended_kalman_forward_update__(xhat_fm, P_fm, y, u, A, B, C, D, R, Q, h, f):
     """
@@ -74,7 +74,7 @@ def ekf(y, x0, f, h, Q, R, u, P0=None):
 
     nx = x0.shape[0]
     if P0 is None:
-        P0 = np.matrix(np.eye(nx)*100)
+        P0 = np.array(np.eye(nx)*100)
 
     xhat_fp = None
     P_fp = []
@@ -101,5 +101,5 @@ def ekf(y, x0, f, h, Q, R, u, P0=None):
     for i in range(nx):
         s[i,:] = [np.sqrt( P_fm[j][i,i].squeeze() ) for j in range(y.shape[1])]
 
-    return xhat_fm[:,0:-1], P_fm[0:-1], s
+    return xhat_fm[:,0:-1], np.dstack(P_fm[0:-1]), s
 
